@@ -1,40 +1,52 @@
-# Copyright 2004-2020 L2J Server
-# L2J Server is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-# L2J Server is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-# You should have received a copy of the GNU General Public License along with this program. If not, see http://www.gnu.org/licenses/.
+FROM alpine:3.19 as base-image
 
-FROM openjdk:15-alpine
+ENV L2JCLI_URI=https://git@bitbucket.org/l2jserver/l2j-server-cli.git
+ENV L2JGAME_URI=https://git@bitbucket.org/l2jserver/l2j-server-game.git
+ENV L2JDP_URI=https://git@bitbucket.org/l2jserver/l2j-server-datapack.git
 
-LABEL maintainer="L2JServer" \
-      version="2.6.2.0" \
-      website="l2jserver.com"
+ENV L2J_DIR=/opt/l2j
+ENV L2J_SOURCE_DIR="$L2J_DIR/source"
 
-COPY entrypoint.sh /entrypoint.sh
-
-ARG branch_gs=develop
-ARG branch_dp=develop
-
-RUN apk update \ 
-    && apk --no-cache add maven mariadb-client unzip git \
-    && mkdir -p /opt/l2j/server && mkdir -p /opt/l2j/target && cd /opt/l2j/target/ \
-    && git clone --branch master --single-branch https://git@bitbucket.org/l2jserver/l2j-server-cli.git cli \
-    && git clone --branch master --single-branch https://git@bitbucket.org/l2jserver/l2j-server-login.git login \
-    && git clone --branch $branch_gs --single-branch https://git@bitbucket.org/l2jserver/l2j-server-game.git game \
-    && git clone --branch $branch_dp --single-branch https://git@bitbucket.org/l2jserver/l2j-server-datapack.git datapack \
-    && cd /opt/l2j/target/cli && chmod 755 mvnw && ./mvnw install \
-    && cd /opt/l2j/target/login && chmod 755 mvnw && ./mvnw install \
-    && cd /opt/l2j/target/game && chmod 755 mvnw && ./mvnw install \
-    && cd /opt/l2j/target/datapack && chmod 755 mvnw && ./mvnw install \
-    && unzip /opt/l2j/target/cli/target/*.zip -d /opt/l2j/server/cli \
-    && unzip /opt/l2j/target/login/target/*.zip -d /opt/l2j/server/login \
-    && unzip /opt/l2j/target/game/target/*.zip -d /opt/l2j/server/game \
-    && unzip /opt/l2j/target/datapack/target/*.zip -d /opt/l2j/server/game \
-    && rm -rf /opt/l2j/target/ && apk del maven git \
-    && chmod +x /opt/l2j/server/cli/*.sh /opt/l2j/server/game/*.sh /opt/l2j/server/login/*.sh /entrypoint.sh
+ENV L2JCLI_DIR=cli
+ENV L2JGAME_DIR=game
+ENV L2JDP_DIR=datapack
 
 
-WORKDIR /opt/l2j/server
+FROM base-image AS build
 
-EXPOSE 7777 2106
+ARG L2JCLI_BRANCH=master
+ARG L2JGAME_BRANCH=develop
+ARG L2JDP_BRANCH=develop
 
-ENTRYPOINT [ "/entrypoint.sh" ]
+RUN \
+  apk update && apk --no-cache add git openjdk21-jdk && \
+  mkdir -p "$L2J_SOURCE_DIR" && \
+  git clone --branch "$L2JCLI_BRANCH" --single-branch "$L2JCLI_URI" "$L2J_SOURCE_DIR/$L2JCLI_DIR" && \
+  git clone --branch "$L2JGAME_BRANCH" --single-branch "$L2JGAME_URI" "$L2J_SOURCE_DIR/$L2JGAME_DIR" && \
+  git clone --branch "$L2JDP_BRANCH" --single-branch "$L2JDP_URI" "$L2J_SOURCE_DIR/$L2JDP_DIR" && \
+  cd "$L2J_SOURCE_DIR/$L2JCLI_DIR" && chmod +x mvnw && ./mvnw package -DskipTests && \
+  cd "$L2J_SOURCE_DIR/$L2JGAME_DIR" && chmod +x mvnw && ./mvnw install -DskipTests && \
+  cd "$L2J_SOURCE_DIR/$L2JDP_DIR" && chmod +x mvnw && ./mvnw package -DskipTests
+
+
+FROM base-image AS deploy
+LABEL maintainer="l2j-server" website="l2jserver.com"
+
+ENV L2J_DEPLOY_DIR="$L2J_DIR/deploy"
+ENV L2J_CUSTOM_DIR="$L2J_DIR/custom"
+ENV L2J_HOME="$L2J_DIR"
+
+WORKDIR "$L2J_DEPLOY_DIR"
+
+COPY --from=build "$L2J_SOURCE_DIR/$L2JCLI_DIR/target/*.zip" "$L2J_SOURCE_DIR/$L2JGAME_DIR/target/*.zip" "$L2J_SOURCE_DIR/$L2JDP_DIR/target/*.zip" "$L2J_DEPLOY_DIR/"
+RUN \
+  apk update && apk --no-cache add unzip openjdk21-jre mariadb-client && \
+  mkdir -p "$L2J_CUSTOM_DIR/game/config" "$L2J_DEPLOY_DIR/$L2JCLI_DIR/logs" "$L2J_DEPLOY_DIR/$L2JGAME_DIR/logs" && \
+  unzip "$L2J_DEPLOY_DIR/*cli*.zip" -d "$L2J_DEPLOY_DIR/$L2JCLI_DIR" && \
+  unzip "$L2J_DEPLOY_DIR/*game*.zip" -d "$L2J_DEPLOY_DIR/$L2JGAME_DIR" && \
+  unzip "$L2J_DEPLOY_DIR/*datapack*.zip" -d "$L2J_DEPLOY_DIR/$L2JGAME_DIR" && \
+  cd "$L2J_DEPLOY_DIR" && rm *.zip && apk del unzip
+COPY resources/ /
+RUN chmod +x "/entrypoint.sh" "/init_database.sh"
+
+ENTRYPOINT ["/entrypoint.sh"]

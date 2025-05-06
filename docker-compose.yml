@@ -1,52 +1,107 @@
-# Copyright 2004-2020 L2J Server
-# L2J Server is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-# L2J Server is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-# You should have received a copy of the GNU General Public License along with this program. If not, see http://www.gnu.org/licenses/. 
+version: "2.4"
 
-version: '3.3'
+volumes:
+  # database data is preserved here
+  game-database-data:
+  # logs
+  game-server-logs:
+  # custom gameserver data is preserved here
+  game-server-custom-data:
+  # interlude directories
+#  game-server-int-logs:
+#  game-server-int-config:
+#  game-server-int-data:
+#  game-server-int-geodata:
+#  game-server-int-pathnode:
+
+networks:
+  default:
+    driver: none
+  database:
+    name: l2jserver-gs-db
+  server:
+    name: l2jserver
 
 services:
-  mariadb:
-    container_name: l2j-server-mariadb
-    image: yobasystems/alpine-mariadb:latest
+  game-database:
+    image: mariadb:10.11
+    container_name: game-database
+    #environment:
+      # variables required on first startup, remove after first run
+      #- MARIADB_ROOT_PASSWORD=mariadb_root_password
+      #- MARIADB_ROOT_HOST=%
+      #- MARIADB_MYSQL_LOCALHOST_USER=1
+      #- MARIADB_DATABASE=l2jgs
     volumes:
-      - /var/lib/mysql
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-    ports:
-      - "3306:3306"
-  l2jserver:
-    container_name: l2j-server-docker
-    image: l2jserver/l2j-server-docker:latest
-    restart: always
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
-    #   args:
-    #     branch_gs: "develop"
-    #     branch_dp: "develop"
-    environment:
-      IP_ADDRESS: ${GAMESERVER_ADDRESS}
-      RATE_XP: "1"
-      RATE_SP: "1"
-      ADMIN_RIGHTS: "True"
-      HELLBOUND_ACCESS: "True"
-      TVT_ENABLED: "True"
-      FORCE_GEODATA: "False"
-      COORD_SYNC: "-1"
-      BUFFER_SERVICE: "True"
-      CUSTOM_NPC_DATA: "True"
-      SAVE_GM_SPAWN_ON_CUSTOM: "True"
-      CUSTOM_SPAWNLIST_TABLE: "True"
-      CUSTOM_TELEPORT_TABLE: "True"
-      CUSTOM_NPC_BUFFER_TABLES: "True"
-      CUSTOM_SKILLS_LOAD: "True"
-      CUSTOM_ITEMS_LOAD: "True"
-      CUSTOM_MULTISELL_LOAD: "True"
-      CUSTOM_BUYLIST_LOAD: "True"
+      - game-database-data:/var/lib/mysql:rw
+    networks:
+      - database
+
+  game-server:
+    # previously build with ./make_docker_image.sh
+    image: l2j-server-game:latest
     depends_on:
-      - mariadb
+      - game-database
     ports:
-      - "7777:7777"
-      - "2106:2106"
+      # gameclient listener
+      - 7777:7777
+    environment:
+      # variables required on first startup to initialize the database
+      #- L2JGAME_DB_INIT=1
+      #- L2JGAME_DB_HOST=game-database
+      #- L2JGAME_DB_PORT=3306
+      #- L2JGAME_DB_USER=l2jgs
+      #- L2JGAME_DB_PASS=mariadb_l2jgs_password
+      #- L2JGAME_DB_NAME=l2jgs
+      #- L2JGAME_DB_INSTALL_USER=root
+      #- L2JGAME_DB_INSTALL_PASS=mariadb_root_password
+      # variables required after initial start or custom config files in the mapped volume for custom data
+      - L2JGAME_database_URL=jdbc:mariadb://game-database:3306/l2jgs
+      - L2JGAME_database_User=l2jgs
+      - L2JGAME_database_Password=mariadb_l2jgs_password
+      # Connect to loginserver on this host and port
+      - L2JGAME_server_LoginHost=login-server
+      - L2JGAME_server_LoginPort=9014
+    volumes:
+      - game-server-logs:/opt/l2j/deploy/game/logs:rw
+      - game-server-custom-data:/opt/l2j/custom/game:rw
+    networks:
+      - database
+      - server
+
+#  game-server-interlude:
+    # previously build with ./make_docker_image.sh -g Interlude -d Interlude -t Interlude
+#    image: l2j-server-game:Interlude
+#    depends_on:
+#      - game-database
+#    ports:
+      # gameclient listener
+#      - 7777:7777
+#    environment:
+      # variables required on first startup to initialize the database
+#      - L2JGAME_DB_INIT=1
+#      - L2JGAME_DB_HOST=game-database
+#      - L2JGAME_DB_PORT=3306
+#      - L2JGAME_DB_USER=l2jgs
+#      - L2JGAME_DB_PASS=mariadb_l2jgs_password
+#      - L2JGAME_DB_NAME=l2jgsint
+#      - L2JGAME_DB_INSTALL_USER=root
+#      - L2JGAME_DB_INSTALL_PASS=mariadb_root_password
+      # variables required after initial start or custom config files in the mapped volumes
+#      - L2JGAME_server_URL=jdbc:mariadb://game-database:3306/l2jgsint
+#      - L2JGAME_server_Login=l2jgs
+#      - L2JGAME_server_Password=mariadb_l2jgs_password
+      # Connect to loginserver on this host and port
+#      - L2JGAME_server_LoginHost=login-server
+#      - L2JGAME_server_LoginPort=9014
+#    volumes:
+#      - game-server-int-logs:/opt/l2j/deploy/game/logs:rw
+       # readwrite required for automatic hexid.txt
+#      - game-server-int-config:/opt/l2j/deploy/game/config:rw
+       # readwrite required for crests
+#      - game-server-int-data:/opt/l2j/deploy/game/data:rw
+#      - game-server-int-geodata:/opt/l2j/deploy/game/geodata:ro
+#      - game-server-int-pathnode:/opt/l2j/deploy/game/pathnode:ro
+#    networks:
+#      - database
+#      - server
